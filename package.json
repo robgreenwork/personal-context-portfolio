@@ -1,0 +1,26 @@
+{
+  "name": "personal-operating-system",
+  "version": "1.0.0",
+  "description": "A tool-agnostic personal AI operating system following AgentOS framework",
+  "type": "module",
+  "main": "youos.js",
+  "scripts": {
+    "init": "node youos.js init",
+    "status": "node youos.js status",
+    "sync": "node youos.js sync",
+    "export": "node youos.js export"
+  },
+  "keywords": [
+    "agentOS",
+    "personal-operating-system",
+    "ai",
+    "claude",
+    "openai",
+    "openclaw"
+  ],
+  "author": "Rob",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
