@@ -1,25 +1,17 @@
 {
-  "name": "personal-operating-system",
+  "name": "multi-workspace-notion-mcp",
   "version": "1.0.0",
-  "description": "A tool-agnostic personal AI operating system following AgentOS framework",
+  "description": "MCP server that connects to multiple Notion workspaces (personal + Bridgit)",
   "type": "module",
-  "main": "youos.js",
+  "main": "notion-mcp-server.js",
   "scripts": {
-    "init": "node youos.js init",
-    "status": "node youos.js status",
-    "sync": "node youos.js sync",
-    "export": "node youos.js export"
+    "start": "node notion-mcp-server.js",
+    "dev": "node --watch notion-mcp-server.js"
   },
-  "keywords": [
-    "agentOS",
-    "personal-operating-system",
-    "ai",
-    "claude",
-    "openai",
-    "openclaw"
-  ],
-  "author": "Rob",
-  "license": "MIT",
+  "dependencies": {
+    "@notionhq/client": "^2.2.15",
+    "express": "^4.18.2"
+  },
   "engines": {
     "node": ">=18.0.0"
   }
