@@ -1,10 +1,13 @@
 #!/usr/bin/env node
 
 /**
- * Multi-Workspace Notion MCP Server
+ * Multi-Workspace Notion MCP Server v2
  *
- * Connects to multiple Notion workspaces (personal + Bridgit)
- * and exposes them as MCP tools for Claude.
+ * Fixed:
+ * - Properly handles database vs page distinction
+ * - Better error messages showing actual properties
+ * - More flexible property name handling
+ * - New debug_database tool for troubleshooting
  */
 
 import { Client } from '@notionhq/client';
@@ -66,7 +69,7 @@ function detectWorkspace(query, explicitWorkspace) {
 const tools = [
   {
     name: 'search_notion',
-    description: 'Search across Notion workspace(s). Auto-detects whether to search personal or Bridgit based on query context, or explicitly specify workspace.',
+    description: 'Search across Notion workspace(s). Auto-detects whether to search personal or Bridgit based on query context.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -109,7 +112,7 @@ const tools = [
       properties: {
         filter_by_org: {
           type: 'string',
-          description: 'Optional: filter by organization (Bridgit, ESco, CARE, Ottercorns, robgreen.io, Personal)'
+          description: 'Optional: filter by organization (Bridgit, ESco, CARE, Ottercorns, robgreen.io, Personal, ARUK)'
         }
       }
     }
@@ -130,6 +133,11 @@ const tools = [
       },
       required: ['title']
     }
+  },
+  {
+    name: 'debug_database',
+    description: 'Debug tool: show database structure and properties',
+    inputSchema: { type: 'object', properties: {} }
   }
 ];
 
@@ -163,10 +171,19 @@ async function handleToolCall(name, args) {
 
     case 'fetch_notion_page': {
       const client = workspaces[args.workspace].client;
-      const page = await client.pages.retrieve({ page_id: args.id });
-      const blocks = await client.blocks.children.list({ block_id: args.id });
 
-      return { page, content: blocks.results, workspace: args.workspace };
+      try {
+        const page = await client.pages.retrieve({ page_id: args.id });
+        const blocks = await client.blocks.children.list({ block_id: args.id });
+        return { type: 'page', page, content: blocks.results, workspace: args.workspace };
+      } catch (pageError) {
+        if (pageError.message?.includes('is a database')) {
+          const database = await client.databases.retrieve({ database_id: args.id });
+          const items = await client.databases.query({ database_id: args.id });
+          return { type: 'database', database, items: items.results, workspace: args.workspace };
+        }
+        throw pageError;
+      }
     }
 
     case 'list_workspaces': {
@@ -179,38 +196,88 @@ async function handleToolCall(name, args) {
       };
     }
 
+    case 'debug_database': {
+      const KANBAN_DB_ID = process.env.PERSONAL_KANBAN_DB_ID;
+
+      if (!KANBAN_DB_ID) {
+        return { error: 'Kanban database ID not configured' };
+      }
+
+      try {
+        const database = await personalNotion.databases.retrieve({ database_id: KANBAN_DB_ID });
+
+        return {
+          success: true,
+          database_id: KANBAN_DB_ID,
+          title: database.title?.[0]?.plain_text || 'Unknown',
+          properties: Object.keys(database.properties).map(name => ({
+            name,
+            type: database.properties[name].type
+          })),
+          full_properties: database.properties
+        };
+      } catch (error) {
+        return {
+          error: true,
+          message: error.message,
+          code: error.code,
+          database_id: KANBAN_DB_ID
+        };
+      }
+    }
+
     case 'get_kanban_status': {
       const KANBAN_DB_ID = process.env.PERSONAL_KANBAN_DB_ID;
 
       if (!KANBAN_DB_ID) {
-        return { error: 'Kanban database ID not configured. Set PERSONAL_KANBAN_DB_ID environment variable.' };
+        return { error: 'Kanban database ID not configured' };
       }
 
-      const filter = args.filter_by_org ? {
-        property: 'Organization',
-        select: { equals: args.filter_by_org }
-      } : undefined;
+      try {
+        const database = await personalNotion.databases.retrieve({ database_id: KANBAN_DB_ID });
+        const availableProperties = Object.keys(database.properties);
 
-      const response = await personalNotion.databases.query({
-        database_id: KANBAN_DB_ID,
-        filter
-      });
+        const queryParams = { database_id: KANBAN_DB_ID };
 
-      const grouped = { 'To Do': [], 'In progress': [], 'Done': [] };
-
-      response.results.forEach(page => {
-        const status = page.properties.Status?.status?.name || 'To Do';
-        if (grouped[status]) {
-          grouped[status].push({
-            id: page.id,
-            title: page.properties.Name?.title?.[0]?.plain_text || 'Untitled',
-            organization: page.properties.Organization?.select?.name,
-            url: page.url
-          });
+        if (args.filter_by_org && availableProperties.includes('Organization')) {
+          queryParams.filter = {
+            property: 'Organization',
+            select: { equals: args.filter_by_org }
+          };
         }
-      });
 
-      return { kanban: grouped, total_tasks: response.results.length };
+        const response = await personalNotion.databases.query(queryParams);
+
+        const grouped = { 'To Do': [], 'In progress': [], 'Done': [] };
+
+        response.results.forEach(page => {
+          const status = page.properties.Status?.status?.name || 'To Do';
+          const taskTitle = page.properties.Name?.title?.[0]?.plain_text
+            || page.properties['Task name']?.title?.[0]?.plain_text
+            || 'Untitled';
+
+          if (grouped[status]) {
+            grouped[status].push({
+              id: page.id,
+              title: taskTitle,
+              organization: page.properties.Organization?.select?.name || 'Unassigned',
+              url: page.url
+            });
+          }
+        });
+
+        return {
+          kanban: grouped,
+          total_tasks: response.results.length,
+          database_properties: availableProperties
+        };
+      } catch (error) {
+        return {
+          error: true,
+          message: error.message,
+          code: error.code
+        };
+      }
     }
 
     case 'create_notion_task': {
@@ -220,27 +287,35 @@ async function handleToolCall(name, args) {
         return { error: 'Kanban database ID not configured' };
       }
 
-      const properties = {
-        Name: { title: [{ text: { content: args.title } }] }
-      };
+      try {
+        const properties = {
+          Name: { title: [{ text: { content: args.title } }] }
+        };
 
-      if (args.status) {
-        properties.Status = { status: { name: args.status } };
+        if (args.status) {
+          properties.Status = { status: { name: args.status } };
+        }
+
+        if (args.organization) {
+          properties.Organization = { select: { name: args.organization } };
+        }
+
+        const newPage = await personalNotion.pages.create({
+          parent: { database_id: KANBAN_DB_ID },
+          properties
+        });
+
+        return {
+          success: true,
+          task: { id: newPage.id, title: args.title, url: newPage.url }
+        };
+      } catch (error) {
+        return {
+          error: true,
+          message: error.message,
+          code: error.code
+        };
       }
-
-      if (args.organization) {
-        properties.Organization = { select: { name: args.organization } };
-      }
-
-      const newPage = await personalNotion.pages.create({
-        parent: { database_id: KANBAN_DB_ID },
-        properties
-      });
-
-      return {
-        success: true,
-        task: { id: newPage.id, title: args.title, url: newPage.url }
-      };
     }
 
     default:
@@ -254,6 +329,7 @@ app.use(express.json());
 app.get('/', (req, res) => {
   res.json({
     status: 'running',
+    version: '2.0',
     workspaces: Object.keys(workspaces),
     tools: tools.map(t => t.name)
   });
@@ -270,7 +346,7 @@ app.post('/mcp', async (req, res) => {
         result = {
           protocolVersion: '2024-11-05',
           capabilities: {},
-          serverInfo: { name: 'multi-workspace-notion-mcp', version: '1.0.0' }
+          serverInfo: { name: 'multi-workspace-notion-mcp', version: '2.0.0' }
         };
         break;
 
@@ -297,7 +373,7 @@ app.post('/mcp', async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`Multi-Workspace Notion MCP Server running on port ${PORT}`);
+  console.log(`Multi-Workspace Notion MCP Server v2.0 running on port ${PORT}`);
   console.log(`Connected workspaces: ${Object.keys(workspaces).join(', ')}`);
   console.log(`Tools available: ${tools.map(t => t.name).join(', ')}`);
 });
