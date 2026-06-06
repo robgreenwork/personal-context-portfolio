@@ -381,9 +381,15 @@ app.post('/mcp', async (req, res) => {
         result = { tools };
         break;
 
-      case 'tools/call':
-        result = await handleToolCall(params.name, params.arguments);
+      case 'tools/call': {
+        const toolResult = await handleToolCall(params.name, params.arguments);
+        result = {
+          content: [
+            { type: 'text', text: JSON.stringify(toolResult, null, 2) }
+          ]
+        };
         break;
+      }
 
       default:
         throw new Error(`Unknown method: ${method}`);
