@@ -1,13 +1,12 @@
 #!/usr/bin/env node
 
 /**
- * Multi-Workspace Notion MCP Server v2
+ * Multi-Workspace Notion MCP Server v3
  *
- * Fixed:
- * - Properly handles database vs page distinction
- * - Better error messages showing actual properties
- * - More flexible property name handling
- * - New debug_database tool for troubleshooting
+ * Fixed for Rob's actual database structure:
+ * - Real status values: Backlog, To do, Ready To Deploy, In Progress, Blocked/Waiting, Done, Not Going To Fix
+ * - Real database ID: f83d9c21-15bf-4ff8-b8f6-56ebb5909584
+ * - Maps statuses into 3 logical groups (To Do / In Progress / Complete)
  */
 
 import { Client } from '@notionhq/client';
@@ -38,6 +37,22 @@ const workspaces = {
   }
 };
 
+// Map your actual status values to logical groups
+const STATUS_GROUPS = {
+  'To Do': ['Backlog', 'To do', 'To Do'],
+  'In Progress': ['Ready To Deploy', 'In Progress', 'In progress', 'Blocked / Waiting', 'Blocked/Waiting'],
+  'Complete': ['Done', 'Not Going To Fix']
+};
+
+function getStatusGroup(statusValue) {
+  for (const [group, statuses] of Object.entries(STATUS_GROUPS)) {
+    if (statuses.includes(statusValue)) {
+      return group;
+    }
+  }
+  return 'To Do'; // Default
+}
+
 function detectWorkspace(query, explicitWorkspace) {
   if (explicitWorkspace && workspaces[explicitWorkspace]) {
     return explicitWorkspace;
@@ -54,7 +69,7 @@ function detectWorkspace(query, explicitWorkspace) {
 
   const personalKeywords = [
     'personal', 'ottercorns', 'robgreen.io', 'esco', 'care',
-    'family', 'fig', 'home', 'kanban', 'task list', 'standup'
+    'family', 'fig', 'home', 'kanban', 'task list', 'tasks', 'standup'
   ];
 
   const bridgitScore = bridgitKeywords.filter(k => lowerQuery.includes(k)).length;
@@ -106,13 +121,17 @@ const tools = [
   },
   {
     name: 'get_kanban_status',
-    description: 'Get current status of personal Kanban board (Task List)',
+    description: 'Get current status of personal Kanban board (Tasks)',
     inputSchema: {
       type: 'object',
       properties: {
         filter_by_org: {
           type: 'string',
           description: 'Optional: filter by organization (Bridgit, ESco, CARE, Ottercorns, robgreen.io, Personal, ARUK)'
+        },
+        show_completed: {
+          type: 'boolean',
+          description: 'Include completed tasks (default false)'
         }
       }
     }
@@ -127,8 +146,7 @@ const tools = [
         organization: { type: 'string', description: 'Which org/project this is for' },
         status: {
           type: 'string',
-          enum: ['To Do', 'In progress', 'Done'],
-          description: 'Initial status'
+          description: 'Initial status: Backlog, To do, Ready To Deploy, In Progress, Blocked / Waiting, Done, or Not Going To Fix'
         }
       },
       required: ['title']
@@ -212,9 +230,11 @@ async function handleToolCall(name, args) {
           title: database.title?.[0]?.plain_text || 'Unknown',
           properties: Object.keys(database.properties).map(name => ({
             name,
-            type: database.properties[name].type
-          })),
-          full_properties: database.properties
+            type: database.properties[name].type,
+            options: database.properties[name].select?.options?.map(o => o.name)
+              || database.properties[name].status?.options?.map(o => o.name)
+              || null
+          }))
         };
       } catch (error) {
         return {
@@ -248,18 +268,25 @@ async function handleToolCall(name, args) {
 
         const response = await personalNotion.databases.query(queryParams);
 
-        const grouped = { 'To Do': [], 'In progress': [], 'Done': [] };
+        // Group by logical status
+        const grouped = { 'To Do': [], 'In Progress': [], 'Complete': [] };
 
         response.results.forEach(page => {
-          const status = page.properties.Status?.status?.name || 'To Do';
+          const rawStatus = page.properties.Status?.status?.name || 'Backlog';
+          const statusGroup = getStatusGroup(rawStatus);
+
+          // Skip completed tasks unless requested
+          if (statusGroup === 'Complete' && !args.show_completed) return;
+
           const taskTitle = page.properties.Name?.title?.[0]?.plain_text
             || page.properties['Task name']?.title?.[0]?.plain_text
             || 'Untitled';
 
-          if (grouped[status]) {
-            grouped[status].push({
+          if (grouped[statusGroup]) {
+            grouped[statusGroup].push({
               id: page.id,
               title: taskTitle,
+              status: rawStatus,
               organization: page.properties.Organization?.select?.name || 'Unassigned',
               url: page.url
             });
@@ -269,7 +296,7 @@ async function handleToolCall(name, args) {
         return {
           kanban: grouped,
           total_tasks: response.results.length,
-          database_properties: availableProperties
+          showing_completed: args.show_completed || false
         };
       } catch (error) {
         return {
@@ -329,7 +356,7 @@ app.use(express.json());
 app.get('/', (req, res) => {
   res.json({
     status: 'running',
-    version: '2.0',
+    version: '3.0',
     workspaces: Object.keys(workspaces),
     tools: tools.map(t => t.name)
   });
@@ -346,7 +373,7 @@ app.post('/mcp', async (req, res) => {
         result = {
           protocolVersion: '2024-11-05',
           capabilities: {},
-          serverInfo: { name: 'multi-workspace-notion-mcp', version: '2.0.0' }
+          serverInfo: { name: 'multi-workspace-notion-mcp', version: '3.0.0' }
         };
         break;
 
@@ -373,7 +400,7 @@ app.post('/mcp', async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`Multi-Workspace Notion MCP Server v2.0 running on port ${PORT}`);
+  console.log(`Multi-Workspace Notion MCP Server v3.0 running on port ${PORT}`);
   console.log(`Connected workspaces: ${Object.keys(workspaces).join(', ')}`);
   console.log(`Tools available: ${tools.map(t => t.name).join(', ')}`);
 });
