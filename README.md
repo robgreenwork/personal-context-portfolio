@@ -31,7 +31,7 @@ Ten files, each covering a different dimension of who you are and how you work:
 
 **Living, not static.** This isn't a thing you write once. It's a thing you maintain — or better, that your agents help you maintain. Your projects file updates as projects change. Your priorities file shifts quarterly. The portfolio evolves with you.
 
-**Portable across everything.** Works with Claude, works with ChatGPT, works with OpenClaw agents, works with whatever comes next. No vendor lock-in. It's just files.
+**Portable across everything.** Works with Claude, works with ChatGPT, works with OpenClaw and Hermes agents, works with whatever comes next. No vendor lock-in. It's just files.
 
 ## Two Ways to Build Yours
 
@@ -41,7 +41,7 @@ Ten files, each covering a different dimension of who you are and how you work:
 
 ## After You Build It
 
-The portfolio is raw material. What makes it powerful is wiring it into the systems you actually use. The `/wiring` directory has guides for exposing your portfolio as an MCP resource, using it in Claude Projects, connecting it to OpenClaw agents, and more. That's the real work — and it's on you.
+The portfolio is raw material. What makes it powerful is wiring it into the systems you actually use. The `/wiring` directory has guides for exposing your portfolio as an MCP resource, using it in Claude Projects, connecting it to OpenClaw and Hermes agents, and more. That's the real work — and it's on you.
 
 ## Repo Structure
 
